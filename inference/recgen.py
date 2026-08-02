@@ -76,14 +76,70 @@ def _brief(converter, parent, R, d):
     return converter(parent).reshape(1, R, d)
 
 
-def _sample(logits, temperature=0.0, top_k=0):
+def _sample(logits, temperature=0.0, top_k=0, top_p=0.0, repetition_penalty=1.0,
+            prev_ids=None):
+    """Sample one token id from `logits` [V].
+
+    Decoding knobs, applied in order:
+      1. `repetition_penalty` (default 1.0 = off): HF-style multiplicative
+         penalty on every token id already present in `prev_ids` (the ids
+         placed so far, prompt + generated) -- logits[id] /= penalty when
+         logits[id] > 0, *= penalty otherwise -- so recently-used tokens
+         are down-weighted and loops are discouraged. Only applied when a
+         non-default penalty AND `prev_ids` are provided.
+      2. `temperature <= 0` (default) -> greedy argmax (deterministic).
+      3. `top_k > 0`: keep only the top-k logits before softmax.
+      4. `top_p` in (0, 1): nucleus sampling -- keep the smallest set of
+         tokens whose cumulative softmax probability exceeds `top_p`,
+         renormalize, sample from that set. 0.0 (default) = disabled.
+    """
+    if repetition_penalty != 1.0 and prev_ids is not None:
+        logits = _apply_repetition_penalty(logits, prev_ids, repetition_penalty)
     if temperature <= 0.0:
         return int(logits.argmax())
     if top_k and top_k < logits.shape[-1]:
         v, _ = torch.topk(logits, top_k)
         logits = logits.masked_fill(logits < v[-1], float("-inf"))
+    if 0.0 < top_p < 1.0:
+        logits = _apply_top_p(logits, top_p)
     p = F.softmax(logits / temperature, dim=-1)
     return int(torch.multinomial(p, 1))
+
+
+def _apply_repetition_penalty(logits: torch.Tensor, prev_ids: torch.Tensor,
+                              penalty: float) -> torch.Tensor:
+    """HF-style multiplicative repetition penalty (same formula as
+    transformers' RepetitionPenaltyLogitsProcessor): for each distinct id in
+    `prev_ids`, divide its logit by `penalty` if positive, multiply if
+    negative. Returns a new tensor (does not mutate `logits` in place).
+
+    Ids outside the logits' vocab range (possible only if a caller passes
+    garbage prev_ids -- RecGen's own ids are always < vocab_size) are
+    skipped silently rather than raising, keeping the helper total."""
+    out = logits.clone()
+    for tok in torch.unique(prev_ids).tolist():
+        if tok >= out.shape[-1]:
+            continue
+        s = out[tok]
+        out[tok] = s / penalty if s > 0 else s * penalty
+    return out
+
+
+def _apply_top_p(logits: torch.Tensor, top_p: float) -> torch.Tensor:
+    """Nucleus filter: keep the smallest set of tokens whose cumulative
+    softmax probability reaches `top_p`, renormalize over the survivors.
+    Returns a new tensor with the non-survivors set to -inf (so the
+    subsequent softmax in _sample only sees the nucleus)."""
+    sorted_logits, sorted_idx = torch.sort(logits, descending=True)
+    cum_probs = torch.cumsum(F.softmax(sorted_logits, dim=-1), dim=-1)
+    # "smallest set whose cumulative probability > top_p": drop the tail of
+    # the sorted distribution beyond the point where the running sum first
+    # exceeds top_p; always keep at least the single most-likely token.
+    remove = cum_probs - F.softmax(sorted_logits, dim=-1) > top_p
+    remove = remove.clone()
+    remove[0] = False
+    to_remove = torch.zeros_like(logits, dtype=torch.bool).scatter_(-1, sorted_idx, remove)
+    return logits.masked_fill(to_remove, float("-inf"))
 
 
 def _dec2_meta(model, U2):
@@ -159,16 +215,27 @@ def _prefill(model, prompt_ids):
 
 @torch.no_grad()
 def recgen_generate(model, prompt_ids, max_new_tokens=40, temperature=0.0,
-                    top_k=0, eos_id=None):
+                    top_k=0, top_p=0.0, repetition_penalty=1.0, seed=None,
+                    eos_id=None):
     """Autoregressive RecGen generation. enc1 is never run after prefill;
     level-1 latents are produced lazily one meta-context at a time (dec2),
     and the bottom level is a continuous next-token loop. Returns the full
-    id sequence [1, P + n_new]."""
+    id sequence [1, P + n_new].
+
+    Decoding knobs (see `_sample`): `temperature` (0 = greedy, the
+    default), `top_k`, `top_p` (nucleus), and `repetition_penalty`
+    (HF-style, applied over the ids placed so far). `seed`, when not None,
+    is passed to torch.manual_seed before the first sample so a
+    temperature-sampled run is reproducible.
+    """
     C1, C2, d, R2 = model.cfg.C1, model.cfg.C2, model.d, model.cfg.R2
     device = prompt_ids.device
     h1_list, a_stream, h2_stream = _prefill(model, prompt_ids)
     ids = prompt_ids
-    sk = dict(temperature=temperature, top_k=top_k)
+    sk = dict(temperature=float(temperature), top_k=int(top_k), top_p=float(top_p),
+              repetition_penalty=float(repetition_penalty))
+    if seed is not None:
+        torch.manual_seed(seed)
 
     def ensure_h1(idx):
         """Lazily decode meta-contexts (dec2 + stream refresh) until h1_list
@@ -192,7 +259,7 @@ def recgen_generate(model, prompt_ids, max_new_tokens=40, temperature=0.0,
             ensure_h1(g - 1)
             brief_src = h1_list[g - 1]
         logits = _h0_hat_at(model, ids, n, brief_src)
-        tok = _sample(logits, **sk)
+        tok = _sample(logits, prev_ids=ids[0], **sk)
         ids = torch.cat([ids, torch.tensor([[tok]], device=device)], dim=1)
         n_new += 1
         if eos_id is not None and tok == eos_id:

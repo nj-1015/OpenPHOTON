@@ -176,11 +176,15 @@ def train_step(state: TrainerState) -> dict:
 
 
 def checkpoint(state: TrainerState, path: str) -> None:
-    """Saves student model + optimizer + dataloader position. The teacher
-    is deliberately NOT included (plan: reload from the HF cache is
+    """Saves student model + optimizer + dataloader position + the training
+    step counter (under the checkpoint's metadata dict, so a resumed run
+    can restore `state.step` exactly rather than re-deriving it from the
+    dataloader position -- see scripts/run_s1.py). The teacher is
+    deliberately NOT included (plan: reload from the HF cache is
     deterministic -- no point paying checkpoint size/time for a frozen,
     reproducible-from-scratch model)."""
-    ckpt.save(path, state.photon, state.optimizer, state.loader.state())
+    ckpt.save(path, state.photon, state.optimizer, state.loader.state(),
+              metadata={"step": state.step, "stage": "S1"})
 
 
 def resume(cfg, path: str, device: str = "cuda") -> tuple[TrainerState, str]:
@@ -188,8 +192,10 @@ def resume(cfg, path: str, device: str = "cuda") -> tuple[TrainerState, str]:
     per the S0 'simulated kill' discipline in
     tests/test_checkpoint_roundtrip.py -- not a save-then-immediately-load
     round trip) + ckpt.load() to restore student weights, optimizer state,
-    and dataloader position."""
+    dataloader position, and the step counter (from the checkpoint's
+    metadata; falls back to 0 for pre-metadata checkpoints)."""
     state, opt_name = build_state(cfg, device=device)
-    _, _, dl_state = ckpt.load(path, state.photon, state.optimizer)
+    _, _, dl_state, metadata = ckpt.load(path, state.photon, state.optimizer)
     state.loader = ShardStreamLoader.from_state(cfg.shard_dir, cfg.micro_batch_size, dl_state)
+    state.step = int(metadata.get("step", 0))
     return state, opt_name

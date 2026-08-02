@@ -104,18 +104,24 @@ def train_step(state: TrainerState) -> dict:
 
 
 def checkpoint(state: TrainerState, path: str) -> None:
-    """Student model + optimizer + dataloader position (teacher excluded --
+    """Student model + optimizer + dataloader position + the training step
+    counter (metadata dict, so resume restores `state.step` exactly rather
+    than re-deriving it from the dataloader position; teacher excluded --
     deterministic reload from the HF cache, same as S1/S2)."""
-    ckpt.save(path, state.photon, state.optimizer, state.loader.state())
+    ckpt.save(path, state.photon, state.optimizer, state.loader.state(),
+              metadata={"step": state.step, "stage": "S3"})
 
 
 def resume(cfg, path: str, device: str = "cuda") -> tuple[TrainerState, str]:
     """Fresh reconstruction + ckpt.load() to restore student weights,
-    optimizer state, and dataloader position from an S3 checkpoint. NB:
-    build_state may apply cfg.init_from (S2 warm start) first -- ckpt.load
-    below immediately overwrites it with the S3 checkpoint's own state, so
-    this is correct (if slightly redundant), matching train/s2_step.resume."""
+    optimizer state, dataloader position, and the step counter (from the
+    checkpoint's metadata; falls back to 0 for pre-metadata checkpoints).
+    NB: build_state may apply cfg.init_from (S2 warm start) first --
+    ckpt.load below immediately overwrites it with the S3 checkpoint's own
+    state, so this is correct (if slightly redundant), matching
+    train/s2_step.resume."""
     state, opt_name = build_state(cfg, device=device)
-    _, _, dl_state = ckpt.load(path, state.photon, state.optimizer)
+    _, _, dl_state, metadata = ckpt.load(path, state.photon, state.optimizer)
     state.loader = ShardStreamLoader.from_state(cfg.shard_dir, cfg.micro_batch_size, dl_state)
+    state.step = int(metadata.get("step", 0))
     return state, opt_name

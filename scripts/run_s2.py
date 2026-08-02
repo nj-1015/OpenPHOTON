@@ -90,18 +90,19 @@ def run_production(shard_dir: str, ckpt_dir: str, init_from: str | None,
     os.makedirs(ckpt_dir, exist_ok=True)
     if do_resume and os.path.exists(cfg.ckpt_path):
         state, opt_name = resume_state(cfg, cfg.ckpt_path, device="cuda")
-        # same steps_done-from-dataloader accounting as scripts/run_s1.py's
-        # 2026-07-27 coordinator fix: ckpt.py saves no step counter, but the
-        # restored DATALOADER position IS the source of truth for how much
-        # data/how many steps were consumed. Derive steps_done from it so a
-        # resumed invocation continues the SAME budget, converging to
-        # exactly the intended token budget across repeated auto-resumes.
-        _idx = state.loader.index
-        _rows_done = (sum(s["num_rows"] for s in _idx["shards"][:state.loader.shard_idx])
-                      + state.loader.offset)
-        steps_done = _rows_done // cfg.micro_batch_size
+        # steps_done comes from the checkpoint's metadata step counter now
+        # (train/s2_step.checkpoint stores it; resume restores it) -- the
+        # dataloader-position derivation remains as a fallback for
+        # pre-metadata checkpoints (metadata step falls back to 0).
+        steps_done = state.step
+        if steps_done == 0:
+            _idx = state.loader.index
+            _rows_done = (sum(s["num_rows"] for s in _idx["shards"][:state.loader.shard_idx])
+                          + state.loader.offset)
+            steps_done = _rows_done // cfg.micro_batch_size
         print(f"resumed from {cfg.ckpt_path}, optimizer={opt_name}, "
-              f"steps_done~={steps_done}/{steps_total} (derived from dataloader pos)")
+              f"steps_done={steps_done}/{steps_total} (step from ckpt metadata, "
+              f"or dataloader pos for pre-metadata checkpoints)")
     else:
         state, opt_name = build_state(cfg, device="cuda")
         steps_done = 0

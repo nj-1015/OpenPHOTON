@@ -70,20 +70,23 @@ def run_production(shard_dir: str, ckpt_dir: str, do_resume: bool, go: bool) -> 
     os.makedirs(ckpt_dir, exist_ok=True)
     if do_resume and os.path.exists(cfg.ckpt_path):
         state, opt_name = resume_state(cfg, cfg.ckpt_path, device="cuda")
-        # Correct resume step-accounting (2026-07-27 coordinator fix): ckpt.py
-        # saves no step counter, but the restored DATALOADER position IS the
-        # source of truth for how much data/how many steps were consumed.
-        # Derive steps_done from it so a resumed invocation continues the SAME
-        # budget -- `for step in range(steps_done, steps_total)` below -- rather
-        # than restarting a fresh full steps_total. This is what lets an
-        # auto-resume loop across pod (cgroup-OOM) deaths converge to exactly
-        # the intended 500M-token budget instead of a fresh epoch per resume.
-        _idx = state.loader.index
-        _rows_done = (sum(s["num_rows"] for s in _idx["shards"][:state.loader.shard_idx])
-                      + state.loader.offset)
-        steps_done = _rows_done // cfg.micro_batch_size
+        # Resume step-accounting (2026-07-27 coordinator fix, improved by
+        # the checkpoint-metadata change): train/train_s1.checkpoint now
+        # stores `state.step` in the checkpoint's metadata dict, and
+        # train_s1.resume restores it -- so a resumed invocation continues
+        # the SAME budget (`for step in range(steps_done, steps_total)`)
+        # instead of restarting a fresh full steps_total. The dataloader
+        # position remains the source of truth for pre-metadata checkpoints
+        # (metadata step falls back to 0, so it's re-derived below).
+        steps_done = state.step
+        if steps_done == 0:
+            _idx = state.loader.index
+            _rows_done = (sum(s["num_rows"] for s in _idx["shards"][:state.loader.shard_idx])
+                          + state.loader.offset)
+            steps_done = _rows_done // cfg.micro_batch_size
         print(f"resumed from {cfg.ckpt_path}, optimizer={opt_name}, "
-              f"steps_done~={steps_done}/{steps_total} (derived from dataloader pos)")
+              f"steps_done={steps_done}/{steps_total} (step from ckpt metadata, "
+              f"or dataloader pos for pre-metadata checkpoints)")
     else:
         state, opt_name = build_state(cfg, device="cuda")
         steps_done = 0
