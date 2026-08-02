@@ -1,0 +1,44 @@
+# model caches / weights
+_ref/
+*.npz
+*.safetensors
+*.bin
+*.pt
+*.ckpt
+checkpoints/
+*.pth
+
+# huggingface cache pointers (never vendor weights into the repo)
+.cache/
+
+# python
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+*.egg-info/
+.venv/
+venv/
+
+# build artifacts
+build/
+dist/
+OpenPHOTON.egg-info/
+
+# secrets
+.env
+*.token
+*credentials*.json
+hf_token*
+
+# S1 data pipeline -- shards (*.bin/*.json sidecars/index.json) + the
+# smoke mini-shard (*.bin already covered above; *.json shard sidecars
+# and index.json are small but still generated data, not source)
+data/_smoke_shards/
+data/_s1_shards/
+
+# editor / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

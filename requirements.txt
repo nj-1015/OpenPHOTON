@@ -1,0 +1,13 @@
+torch>=2.10
+transformers>=5.3
+numpy
+pytest
+
+# S1 (optional -- imported lazily, both have graceful fallbacks/guards):
+#   bitsandbytes  -- 8-bit Adam (train/train_s1.py falls back to
+#                    torch.optim.AdamW if unavailable/unusable)
+#   datasets      -- only needed for data/tokenize_shard.py's
+#                    hf_streaming_texts() production adapter; the smoke
+#                    test uses data/sample_texts.py instead
+# bitsandbytes
+# datasets

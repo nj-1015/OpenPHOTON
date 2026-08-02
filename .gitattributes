@@ -1,0 +1,10 @@
+# Normalize all text files to LF in the repository and on checkout, on
+# every platform -- avoids the classic Windows-git-vs-WSL-git false-diff
+# (every line showing as changed) when the same working tree is touched by
+# two git clients with different core.autocrlf defaults. Found while
+# verifying S0's reproducibility across both Windows and WSL environments.
+* text=auto eol=lf
+
+# Jupyter notebooks are JSON; treat as text but let git diff them as JSON
+# rather than binary (still LF-normalized per the rule above).
+*.ipynb text
