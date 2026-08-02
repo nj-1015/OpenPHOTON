@@ -72,7 +72,7 @@ def test_checkpoint_roundtrip_after_simulated_kill(tmp_path):
     assert len(fresh_optimizer.state) == 0  # genuinely fresh, no momentum yet
 
     # --- resume ---
-    model_state, opt_state, loaded_dl_state = load(ckpt_path, fresh_model, fresh_optimizer)
+    model_state, opt_state, loaded_dl_state, metadata = load(ckpt_path, fresh_model, fresh_optimizer)
 
     # 1. model weights: bit-identical
     for k, v in original_model_tensors.items():
@@ -101,6 +101,48 @@ def test_checkpoint_roundtrip_after_simulated_kill(tmp_path):
     assert torch.equal(resumed_next_batch, expected_next_batch), (
         "RNG stream did not resume identically -- next batch differs"
     )
+
+    # 5. metadata: not passed to save() -> empty dict, never None
+    assert metadata == {}
+
+
+def test_checkpoint_metadata_roundtrip(tmp_path):
+    """save(metadata=...) stores the dict verbatim; load() returns it."""
+    ckpt_path = str(tmp_path / "ckpt.pt")
+    model = _tiny_model()
+    optimizer = torch.optim.Adam(model.parameters(), lr=1e-2)
+    dl_state = DataloaderState(shard_idx=1, offset=7, rng_state=torch.get_rng_state())
+
+    meta = {"step": 123, "stage": "S2", "lr": 2e-4}
+    save(ckpt_path, model, optimizer, dl_state, metadata=meta)
+
+    _, _, loaded_dl_state, loaded_meta = load(ckpt_path)
+    assert loaded_meta == meta
+    # and the payload itself is untouched by the metadata addition
+    assert loaded_dl_state.shard_idx == 1
+    assert loaded_dl_state.offset == 7
+
+
+def test_checkpoint_metadata_default_empty_for_legacy_file(tmp_path):
+    """A checkpoint written without a metadata key (pre-metadata format)
+    loads with metadata == {} rather than KeyError -- the backward-compat
+    contract callers rely on."""
+    ckpt_path = str(tmp_path / "legacy.pt")
+    model = _tiny_model()
+    optimizer = torch.optim.Adam(model.parameters(), lr=1e-2)
+    dl_state = DataloaderState(shard_idx=0, offset=0, rng_state=torch.get_rng_state())
+
+    # hand-write the OLD format: no "metadata" key at all
+    legacy = dict(
+        model_state=model.state_dict(),
+        optimizer_state=optimizer.state_dict(),
+        dataloader_state=dl_state.to_dict(),
+    )
+    torch.save(legacy, ckpt_path)
+
+    _, _, loaded_dl_state, loaded_meta = load(ckpt_path)
+    assert loaded_meta == {}
+    assert loaded_dl_state.shard_idx == 0
 
 
 def test_checkpoint_save_is_atomic_no_torn_file_on_crash(tmp_path, monkeypatch):

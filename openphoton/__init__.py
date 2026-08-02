@@ -136,7 +136,9 @@ def _resolve(bundle_or_model):
 
 
 def generate(bundle_or_model: Union[OpenPhoton, PhotonQwen3ForCausalLM], prompt: str,
-             max_new_tokens: int = 40, temperature: float = 0.0, top_k: int = 0) -> str:
+             max_new_tokens: int = 40, temperature: float = 0.0, top_k: int = 0,
+             top_p: float = 0.0, repetition_penalty: float = 1.0,
+             seed: Optional[int] = None) -> str:
     """Generate text continuing `prompt` via RecGen (`inference.recgen`),
     the architecture's growing-KV-efficient autoregressive decode path.
 
@@ -147,7 +149,15 @@ def generate(bundle_or_model: Union[OpenPhoton, PhotonQwen3ForCausalLM], prompt:
     tokens are decoded back into text -- the padding never reaches the
     returned string.
 
-    `temperature=0.0` (the default) is greedy argmax decoding.
+    Decoding knobs (passed straight through to `inference.recgen`):
+      * `temperature=0.0` (the default) is greedy argmax decoding.
+      * `top_k>0` restricts sampling to the top-k logits.
+      * `top_p` in (0, 1) enables nucleus sampling.
+      * `repetition_penalty != 1.0` down-weights already-generated tokens
+        (HF-style), which helps break RecGen's known longer-generation
+        loops on the S3 checkpoint.
+      * `seed`, when not None, seeds torch's RNG before the first sample so
+        a temperature-sampled run is reproducible.
     """
     model, tokenizer = _resolve(bundle_or_model)
     device = next(model.parameters()).device
@@ -173,7 +183,9 @@ def generate(bundle_or_model: Union[OpenPhoton, PhotonQwen3ForCausalLM], prompt:
 
     eos_id = tokenizer.eos_token_id
     out_ids = recgen_generate(model, ids, max_new_tokens=max_new_tokens,
-                               temperature=temperature, top_k=top_k, eos_id=eos_id)
+                              temperature=temperature, top_k=top_k, top_p=top_p,
+                              repetition_penalty=repetition_penalty, seed=seed,
+                              eos_id=eos_id)
     new_ids = out_ids[0, prompt_len + pad_len:]
     return tokenizer.decode(new_ids, skip_special_tokens=True)
 

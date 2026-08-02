@@ -115,6 +115,20 @@ print(generate(model, "In a small village by the sea,", max_new_tokens=40, tempe
 print(kv_footprint(model, seq_len=2048))            # -> (57344, 3584, 16.0)
 ```
 
+`generate` also accepts the standard decoding knobs, passed straight
+through to RecGen (`inference/recgen.py`):
+
+```python
+print(generate(model, "Once upon a time,",
+               max_new_tokens=64, temperature=0.8,   # 0.0 = greedy (default)
+               top_k=40,                             # top-k sampling
+               top_p=0.9,                            # nucleus sampling
+               repetition_penalty=1.2,               # HF-style, discourages loops
+               seed=42))                             # reproducible sampling
+```
+
+All knobs default to disabled, so existing calls are unchanged.
+
 **Note:** the `OpenPHOTON/Qwen3-0.6B` Hugging Face checkpoint is a
 **pending upload**. Until it's live, `load_openphoton` also accepts a
 local checkpoint path (e.g. `load_openphoton("checkpoints/s3_final_ckpt.pt")`)

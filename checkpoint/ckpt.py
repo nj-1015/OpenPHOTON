@@ -15,6 +15,7 @@ torn checkpoint on disk.
 import os
 import tempfile
 from dataclasses import dataclass
+from typing import Optional
 
 import torch
 
@@ -44,13 +45,23 @@ def _state_dict_of(obj) -> dict:
     return obj.state_dict()
 
 
-def save(path: str, model, optimizer, dataloader_state: DataloaderState) -> None:
+def save(path: str, model, optimizer, dataloader_state: DataloaderState,
+         metadata: Optional[dict] = None) -> None:
     """model / optimizer: either a state_dict already, or an object with
-    .state_dict() (nn.Module / torch.optim.Optimizer -- the common case)."""
+    .state_dict() (nn.Module / torch.optim.Optimizer -- the common case).
+
+    `metadata` is an optional caller-supplied dict stored verbatim under the
+    checkpoint's "metadata" key (e.g. {"step": 123, "stage": "S1"}) --
+    trainers use it to persist the training step counter so a resumed run
+    doesn't have to re-derive it from the dataloader position (see
+    train/train_s1.py and scripts/run_s1.py). Absent/empty by default, so
+    older callers are unaffected.
+    """
     ckpt = dict(
         model_state=_state_dict_of(model),
         optimizer_state=_state_dict_of(optimizer),
         dataloader_state=dataloader_state.to_dict(),
+        metadata=dict(metadata or {}),
     )
     abspath = os.path.abspath(path)
     directory = os.path.dirname(abspath) or "."
@@ -68,11 +79,15 @@ def save(path: str, model, optimizer, dataloader_state: DataloaderState) -> None
 
 
 def load(path: str, model=None, optimizer=None):
-    """Returns (model_state, optimizer_state, dataloader_state). If `model`/
-    `optimizer` OBJECTS (not raw dicts) are passed, also calls
+    """Returns (model_state, optimizer_state, dataloader_state, metadata).
+    If `model`/`optimizer` OBJECTS (not raw dicts) are passed, also calls
     .load_state_dict() on them in place, so the common case is just:
 
-        model_state, opt_state, dl_state = ckpt.load(path, model, optimizer)
+        model_state, opt_state, dl_state, meta = ckpt.load(path, model, optimizer)
+
+    `metadata` is the dict stored by `save()` ({} for checkpoints written
+    by older versions that predate the metadata key, so callers can rely on
+    a dict return without an existence check).
 
     weights_only=False: this is a fully local/trusted checkpoint file (not
     an untrusted download) -- optimizer state_dicts carry plain Python
@@ -83,10 +98,11 @@ def load(path: str, model=None, optimizer=None):
     model_state = ckpt["model_state"]
     optimizer_state = ckpt["optimizer_state"]
     dataloader_state = DataloaderState.from_dict(ckpt["dataloader_state"])
+    metadata = dict(ckpt.get("metadata", {}))
 
     if model is not None and not isinstance(model, dict):
         model.load_state_dict(model_state)
     if optimizer is not None and not isinstance(optimizer, dict):
         optimizer.load_state_dict(optimizer_state)
 
-    return model_state, optimizer_state, dataloader_state
+    return model_state, optimizer_state, dataloader_state, metadata
