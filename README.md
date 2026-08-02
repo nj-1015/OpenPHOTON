@@ -9,6 +9,10 @@ below).
 
 ## What is PHOTON?
 
+![A Transformer reads horizontally along one flat, ever-growing sequence; PHOTON reads vertically, compressing tokens into a few coarse summaries and generating from those.](assets/photon_vertical.png)
+
+*A Transformer re-reads one flat, ever-growing sequence. PHOTON reads **vertically** — compressing tokens into a handful of coarse summaries and generating from those.*
+
 PHOTON is a hierarchical transformer architecture built to keep only a
 small, slowly-growing key-value (KV) cache at decode time instead of one
 entry per layer per token. It splits the stack into four stages --
@@ -19,6 +23,10 @@ stream (`enc2`) keeps a growing KV cache; the local decoders operate over
 small, bounded windows. At this repo's (C1=2, C2=2) setting, that's a
 **~16x** smaller growing KV cache than a vanilla transformer of the same
 depth (measured: 57,344 -> 3,584 entries at 2048 tokens -- see Results).
+
+![Bottom-up encoder (enc1 to enc2) compresses tokens into coarse latents; a top-down decoder (dec2 to dec1) reconstructs tokens in small local windows. Only the coarse enc2 stream keeps a growing cache.](assets/photon_shape.png)
+
+*The hourglass: a bottom-up encoder compresses tokens into coarse latents, and a top-down decoder reconstructs them locally — only the coarse stream at the top keeps a growing KV cache.*
 
 Rather than training a PHOTON model from random init, this repo starts
 from a pretrained Qwen3-0.6B, slices its 28 transformer layers 7/7/7/7
@@ -61,6 +69,10 @@ architecture used throughout this repo:
   reconstruction loss) that the sweep didn't touch. Recorded here rather
   than smoothed over, since it's the most concrete lead on what to try
   next.
+
+![Growing KV cache per token: vanilla Qwen3-0.6B at 112 KiB/token versus PHOTON (RecGen) at 7 KiB/token, a 16x reduction.](assets/kv_reduction.png)
+
+*Growing KV cache per token: the vanilla model caches every layer for every token; PHOTON (RecGen) caches only the coarse stream — ~16x smaller at this repo's (2,2) setting.*
 
 ## What this is / isn't
 
