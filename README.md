@@ -99,7 +99,17 @@ harness/     teacher hidden-state capture (offline .npz dump + online selective-
 checkpoint/  atomic save/load (model + optimizer + dataloader state)
 data/        shard format, tokenization, streaming dataset
 scripts/     CLI launchers, smoke tests, evals, pod setup
+notebooks/   companion Colab notebook — the "What Is Perplexity?" tutorial
 ```
+
+## Companion notebook
+
+The perplexity yardstick used throughout this series has a gentle, reproducible
+tutorial: [`notebooks/perplexity_tutorial.ipynb`](notebooks/perplexity_tutorial.ipynb)
+— measures real perplexity with Qwen3 (and a Gemma-4 / Japanese "twist"), every
+number reproducible on a free Colab GPU.
+
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/nj-1015/OpenPHOTON/blob/main/notebooks/perplexity_tutorial.ipynb)
 
 ## Quickstart
 
